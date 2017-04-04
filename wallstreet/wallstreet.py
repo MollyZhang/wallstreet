@@ -152,7 +152,7 @@ class Option:
         except (KeyError, AssertionError):
             if all((d, m, y)) and not self._has_run and not strict:
                 closest_date = min(self._exp, key=lambda x: abs(x - self._expiration))
-                print('No options listed for given date, using %s instead' % closest_date.strftime(DATE_FORMAT))
+                #print('No options listed for given date, using %s instead' % closest_date.strftime(DATE_FORMAT))
                 self._has_run = True
                 self.__init__(quote, closest_date.day, closest_date.month, closest_date.year, source=source)
             else:
@@ -242,7 +242,7 @@ class Call(Option):
                     raise LookupError('No options listed for given strike price.')
                 else:
                     closest_strike = min(self.strikes, key=lambda x: abs(x - strike))
-                    print('No option for given strike, using %s instead' % closest_strike)
+                    #print('No option for given strike, using %s instead' % closest_strike)
                     self.set_strike(closest_strike)
 
     def set_strike(self, val):
