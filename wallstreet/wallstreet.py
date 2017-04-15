@@ -2,7 +2,7 @@ import requests
 import re, json
 
 from datetime import datetime, date
-from time import mktime, time
+from time import mktime
 
 from wallstreet.constants import DATE_FORMAT, DATETIME_FORMAT
 from wallstreet.blackandscholes import riskfree, BlackandScholes
@@ -24,6 +24,21 @@ def parse(val):
     return val
 
 
+class ClassPropertyDescriptor:
+    def __init__(self, f):
+        self.f = f
+
+    def __get__(self, obj, objtype):
+        return self.f.__get__(obj, objtype)()
+
+
+def classproperty(func):
+    if not isinstance(func, (classmethod, staticmethod)):
+        func = classmethod(func)
+
+    return ClassPropertyDescriptor(func)
+
+
 def strike_required(func):
     """ Decorator for methods that require the set_strike method to be used first """
 
@@ -36,27 +51,26 @@ def strike_required(func):
             raise AttributeError('Use set_strike() method first')
     return deco
 
-rate = riskfree()
-
 
 class Stock:
-    _G_API = 'http://finance.google.com/finance/info?client=ig&q='
+    _G_API = 'http://finance.google.com/finance/info'
     _Y_API = 'https://query2.finance.yahoo.com/v7/finance/options/'
 
     def __init__(self, quote, exchange=None, source='google'):
         quote = quote.upper()
-        query = str(quote)
-        if exchange:
-            query = exchange.upper() + ":" + quote
+        self._attempted_ticker = quote
+        self._attempted_exchange = exchange
 
         self.source = source.lower()
         if self.source == 'google':
-            self._google(query)
+            self._google(quote, exchange)
         elif self.source == 'yahoo':
-            self._yahoo(query)
+            self._yahoo(quote, exchange)
 
-    def _yahoo(self, query):
-        """ Collects data from Yahoo Finance API  """
+    def _yahoo(self, quote, exchange=None):
+        """ Collects data from Yahoo Finance API """
+
+        query = quote + "." + exchange.upper() if exchange else quote
 
         if not hasattr(self, 'session_y'):
             self._session_y = requests.Session()
@@ -64,6 +78,8 @@ class Stock:
 
         if r.status_code == 404:
             raise LookupError('Ticker symbol not found.')
+        else:
+            r.raise_for_status()
 
         jayson = r.json()['optionChain']['result'][0]['quote']
 
@@ -73,14 +89,19 @@ class Stock:
         self.exchange = jayson['exchange']
         self.change = jayson['regularMarketChange']
         self.cp = jayson['regularMarketChangePercent']
-        self._last_trade = datetime.fromtimestamp(jayson['regularMarketTime'])
+        self._last_trade = datetime.utcfromtimestamp(jayson['regularMarketTime'])
+        self.name = jayson['longName']
 
-    def _google(self, query):
+    def _google(self, quote, exchange=None):
         """ Collects data from Google Finance API """
+
+        query = exchange.upper() + ":" + quote if exchange else quote
+
+        params = {'client': 'ig', 'q': query}
 
         if not hasattr(self, 'session'):
             self._session = requests.Session()
-        r = self._session.get(__class__._G_API + query)
+        r = self._session.get(__class__._G_API, params=params)
 
         try:
             jayson = r.text.replace('\n', '')
@@ -89,10 +110,12 @@ class Stock:
         except:
             self.ticker = None
 
-        if r.status_code == 400 or self.ticker != query:
+        if r.status_code == 400 or self.ticker != query.split(':')[-1]:
             raise LookupError('Ticker symbol not found. Try adding the exchange parameter')
+        else:
+            r.raise_for_status()
 
-        self.id= jayson["id"]
+        self.id = jayson["id"]
         self.exchange = jayson['e']
         self._price = parse(jayson['l'])
         try:
@@ -102,9 +125,10 @@ class Stock:
             self.change = jayson['c']
             self.cp = jayson['cp']
         self._last_trade = datetime.strptime(jayson['lt_dts'], '%Y-%m-%dT%H:%M:%SZ')
+        self.name = None
 
     def update(self):
-        self.__init__(self.ticker, source=self.source)
+        self.__init__(self._attempted_ticker, exchange=self._attempted_exchange, source=self.source)
 
     def __repr__(self):
         return 'Stock(ticker=%s, price=%s)' % (self.ticker, self.price)
@@ -121,7 +145,7 @@ class Stock:
 
 
 class Option:
-    _G_API = 'https://www.google.com/finance/option_chain?q='
+    _G_API = 'https://www.google.com/finance/option_chain'
     _Y_API = 'https://query2.finance.yahoo.com/v7/finance/options/'
 
     def __new__(cls, *args, **kwargs):
@@ -129,7 +153,7 @@ class Option:
         instance._has_run = False  # This is to prevent an infinite loop
         return instance
 
-    def __init__(self, quote, d=date.today().day, m=date.today().month,
+    def __init__(self, quote, opt_type, d=date.today().day, m=date.today().month,
                  y=date.today().year, strict=False, source='google'):
 
         self.source = source.lower()
@@ -145,9 +169,11 @@ class Option:
         self.expiration = date(y, m, d)
 
         try:
-            self.calls = self.data['calls']
-            self.puts = self.data['puts']
-            assert self.calls and self.puts
+            if opt_type == 'Call':
+                self.data = self.data['calls']
+            elif opt_type == 'Put':
+                self.data = self.data['puts']
+            assert self.data
 
         except (KeyError, AssertionError):
             if all((d, m, y)) and not self._has_run and not strict:
@@ -156,10 +182,10 @@ class Option:
                 self._has_run = True
                 self.__init__(quote, closest_date.day, closest_date.month, closest_date.year, source=source)
             else:
-                raise ValueError('Possible expiration dates for this stock are:', self.expirations) from None
+                raise ValueError('Possible expiration dates for this option are:', self.expirations) from None
 
     def _yahoo(self, quote, d, m, y):
-        """ Collects data from Yahoo Finance API  """
+        """ Collects data from Yahoo Finance API """
 
         epoch = int(round(mktime(date(y, m, d).timetuple())/86400, 0)*86400)
 
@@ -169,6 +195,8 @@ class Option:
 
         if r.status_code == 404:
             raise LookupError('Ticker symbol not found.')
+        else:
+            r.raise_for_status()
 
         json = r.json()
 
@@ -180,20 +208,28 @@ class Option:
         self._exp = [datetime.utcfromtimestamp(i).date() for i in json['optionChain']['result'][0]['expirationDates']]
 
     def _google(self, quote, d, m, y):
-        """ Collects data from Google Finance API  """
+        """ Collects data from Google Finance API """
 
         quote = quote.upper()
         query = str(quote)
 
-        if d: query += '&expd=' + str(d)
-        if m: query += '&expm=' + str(m)
-        if y: query += '&expy=' + str(y)
+        params = {'q': query}
+
+        if d: params['expd'] = str(d)
+        if m: params['expm'] = str(m)
+        if y: params['expy'] = str(y)
+
+        params['output'] = 'json'
 
         if not hasattr(self, 'session'):
             self.session = requests.Session()
-        r = self.session.get(__class__._G_API + query + '&output=json')
+
+        r = self.session.get(__class__._G_API, params=params)
+
         if r.status_code == 400:
             raise LookupError('Ticker symbol not found.')
+        else:
+            r.raise_for_status()
 
         valid_json = re.sub(r'(?<={|,)([a-zA-Z][a-zA-Z0-9_]*)(?=:)', r'"\1"', r.text)
         self.data = json.loads(valid_json)
@@ -203,6 +239,13 @@ class Option:
 
         self._exp = [date(int(dic['y']), int(dic['m']), int(dic['d']))
                      for dic in self.data['expirations']]
+
+    @classproperty
+    def rate(cls):
+        if not hasattr(cls, '_rate'):
+            cls._rate = riskfree()
+
+        return cls._rate
 
     @property
     def expiration(self):
@@ -221,12 +264,7 @@ class Call(Option):
 
         quote = quote.upper()
         kw = {'d': d, 'm': m, 'y': y, 'strict': strict, 'source': source}
-        super().__init__(quote, **kw)
-
-        if self.__class__.Option_type == 'Call':
-            self.data = self.calls
-        elif self.__class__.Option_type == 'Put':
-            self.data = self.puts
+        super().__init__(quote, self.__class__.Option_type, **kw)
 
         self.T = (self._expiration - date.today()).days/365
         self.q = 0
@@ -272,7 +310,7 @@ class Call(Option):
                     self.strike,
                     self.T,
                     self._price,
-                    rate(self.T),
+                    self.rate(self.T),
                     self.__class__.Option_type,
                     self.q
                     )

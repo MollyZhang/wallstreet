@@ -1,14 +1,15 @@
+
 from setuptools import setup
 
 setup(
-    name='wallstreet',
-    version='0.2-silent',
-    description='Real-time Stock and Option tools',
-    url='https://github.com/MollyZhang/wallstreet',
+    name='mockrequests',
+    version='0.1.2',
+    description='Easy unit testing for HTTP requests',
+    url='https://github.com/mcdallas/mockrequests',
     author='Mike Dallas',
     author_email='mc-dallas@hotmail.com',
     license='MIT',
-    packages=['wallstreet'],
+    packages=['mockrequests'],
     classifiers=[
         # How mature is this project? Common values are
         # 3 - Alpha
@@ -18,8 +19,8 @@ setup(
 
         # Indicate who your project is intended for
         'Intended Audience :: Developers',
-        'Intended Audience :: Financial and Insurance Industry',
-        'Topic :: Office/Business :: Financial :: Investment',
+        'Topic :: Software Development :: Testing',
+        'Topic :: Internet :: WWW/HTTP',
         'Topic :: Software Development :: Libraries :: Python Modules',
         'Operating System :: OS Independent',
 
@@ -31,6 +32,6 @@ setup(
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.5',
     ],
-    keywords='stocks options finance market shares greeks implied volatility real-time',
-    install_requires=['requests', 'beautifulsoup4'],
+    keywords='requests mock unit test unit-test http',
+    install_requires=['requests'],
 )
